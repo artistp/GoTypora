@@ -456,8 +456,6 @@ func main() {
 }
 ```
 
-
-
 <font color=red>**单向channel**</font>
 
 ```go
@@ -492,9 +490,101 @@ func main() {
 
 ```
 
+## 2.5 select
 
+Go里面提供了一个关键字select，通过select可以监听 channel上的数据流动。
 
+select 的用法与switch 语言非常类似，由select开始一个新的选择块，每个选择条件由 case语句来描述。
 
+与switch语句可以选择任何可使用相等比较的条件相比，select有比较多的限制，其中最大的一条限制就是**每个case 语句里必须是一个IO操作**，大致的结构如下:
+
+```go
+select {
+case <-chan1:
+	//如果chan1成功读到数据，则进行该case处理语句
+case chan2 <- 1:
+	//如果成功向chan2写入数据，则进行该case 处理语句
+default:
+	//如果上面都没有成功，则进入default处理流程
+
+```
+
+在一个select 语句中，Go语言会按顺序从头至尾评估每一个发送和接收的语句。
+
+如果其中的任意一语句可以继续执行(即没有被阻塞)，那么就从那些可以执行的语句中任意选择一条来使用。
+
+如果没有任意一条语句可以执行(即所有的通道都被阻塞)，那么有两种可能的情况:
+
+- 如果给出了default语句，那么就会执行default 语句，同时程序的执行会从select 语句后的语句中恢复。
+- 如果没有default 语句，那么select语句将被阻塞，直到至少有一个通信可以进行下去。
+
+```go
+//fibonacci 1 1 2 3 5 8
+package main
+
+import "fmt"
+
+//ch只写，quit只读
+func fibonacci(ch chan<- int,quit <-chan bool)  {
+   x,y:=1,1
+   for {
+      select {
+      case ch<-x:
+         x,y=y,x+y
+      case <-quit:
+         //fmt.Println(flag)
+         return
+      }
+   }
+}
+func main() {
+   ch:=make(chan int) //数字通信
+   quit:=make(chan bool) //程序是否结束
+   //消费者，从channel读取内容
+   //新建goroutine
+   var num int
+   go func() {
+      for i := 0; i < 8; i++ {
+         num=<-ch
+      }
+      quit<-true
+   }()
+   fibonacci(ch,quit)
+   fmt.Println(num)
+}
+```
+
+```go
+//select实现超时机制
+package main
+
+import (
+   "fmt"
+   "time"
+)
+
+func main() {
+   ch:=make(chan int)
+   quit:=make(chan bool)
+   go func() {
+      for true {
+         select {
+         case num:=<-ch:
+            fmt.Println("num=",num)
+         case <-time.After(3*time.Second): //如果3s钟内没有数据产生，则超时
+            fmt.Println("超时")
+            quit<-true
+         }
+      }  
+   }()
+   for i := 0; i < 5; i++ {
+      ch<-i
+      time.Sleep(1*time.Second)
+   }
+   <-quit
+   fmt.Println("程序结束")
+}
+```
 
 # 3 包
 
@@ -994,6 +1084,8 @@ func main() {
 
 ## 3.6 time包
 
+### 3.6.1 timer
+
 ```go
 //实现延时功能
 package main
@@ -1014,13 +1106,379 @@ func main2()  {
 }
 
 func main1() {
+  //创建一个定时器，设置时间为2s，2s后往time通道写内容（当前时间）只会响应一次
    timer:=time.NewTimer(2*time.Second)
+  //timer.Reset(1*time.Second)//重置定时器
+	//timer.Stop()//停止定时器
+  //2s后,往time.C写数据，有数据后，就可以读取
    <-timer.C
    fmt.Println("时间到")
 }
 ```
 
+### 3.6.2 ticker
 
+```go
+package main
+
+import (
+   "fmt"
+   "time"
+)
+
+func main() {
+   //每隔指定时间就会往channel中放数据
+   ticker:=time.NewTicker(1*time.Second)
+   i:=0
+   for true {
+      <-ticker.C
+      i++
+      fmt.Println("i=",i)
+      if i==5{
+         ticker.Stop()
+         break
+      }
+   }
+}
+```
+
+## 3.7 logrus
+
+`logrus`完全兼容标准的`log`库，还支持文本、JSON 两种日志输出格式。很多知名的开源项目都使用了这个库，如大名鼎鼎的 docker。
+
+### 3.7.1 简介
+
+**安装**
+
+```text
+ go get github.com/sirupsen/logrus
+```
+
+*使用*
+
+```go
+package main
+
+import (
+  "github.com/sirupsen/logrus"
+)
+
+func main() {
+  logrus.SetLevel(logrus.TraceLevel)
+
+  logrus.Trace("trace msg")
+  logrus.Debug("debug msg")
+  logrus.Info("info msg")
+  logrus.Warn("warn msg")
+  logrus.Error("error msg")
+  logrus.Fatal("fatal msg")
+  logrus.Panic("panic msg")
+}
+```
+
+`logrus`支持更多的日志级别：
+
+- `Panic`：记录日志，然后`panic`。
+
+- `Fatal`：致命错误，出现错误时程序无法正常运转。输出日志后，程序退出；
+
+- `Error`：错误日志，需要查看原因；
+
+- `Warn`：警告信息，提醒程序员注意；
+
+- `Info`：关键操作，核心流程的日志；
+
+- `Debug`：一般程序中输出的调试信息；
+
+- `Trace`：很细粒度的信息，一般用不到；
+
+日志级别从上向下依次增加，`Trace`最大，`Panic`最小。`logrus`有一个日志级别，高于这个级别的日志不会输出。默认的级别为`InfoLevel`。所以为了能看到`Trace`和`Debug`日志，我们在`main`函数第一行设置日志级别为`TraceLevel`。
+
+**输出**
+
+```text
+time="2020-02-07T21:22:42+08:00" level=trace msg="trace msg"
+time="2020-02-07T21:22:42+08:00" level=debug msg="debug msg"
+time="2020-02-07T21:22:42+08:00" level=info msg="info msg"
+time="2020-02-07T21:22:42+08:00" level=info msg="warn msg"
+time="2020-02-07T21:22:42+08:00" level=error msg="error msg"
+time="2020-02-07T21:22:42+08:00" level=fatal msg="fatal msg"
+exit status 1
+```
+
+输出中有三个关键信息，`time`、`level`和`msg`：
+
+- `time`：输出日志的时间；
+
+- `level`：日志级别；
+
+- `msg`：日志信息。
+
+### 3.7.2 定制日志
+
+**输出调用logrus的方法和文件名**
+
+调用`logrus.SetReportCaller(true)`设置在输出日志中添加文件名和方法信息：
+
+```go
+package main
+
+import (
+  "github.com/sirupsen/logrus"
+)
+
+func main() {
+  logrus.SetReportCaller(true)
+
+  logrus.Info("info msg")
+}
+```
+
+输出多了两个字段`file`为调用`logrus`相关方法的文件名，`func`为方法名：
+
+```text
+go run main.go
+time="2020-02-07T21:46:03+08:00" level=info msg="info msg" func=main.main file="D:/code/golang/src/github.com/darjun/go-daily-lib/logrus/caller/main.go:10"
+```
+
+**自定义添加字段**
+
+有时候需要在输出中添加一些字段，可以通过调用`logrus.WithField`和`logrus.WithFields`实现。`logrus.WithFields`接受一个`logrus.Fields`类型的参数，其底层实际上为`map[string]interface{}`：
+
+```go
+type Fields map[string]interface{}
+```
+
+下面程序在输出中添加两个字段`name`和`age`：
+
+```go
+package main
+
+import (
+  "github.com/sirupsen/logrus"
+)
+
+func main() {
+  logrus.WithFields(logrus.Fields{
+    "name": "dj",
+    "age": 18,
+  }).Info("info msg")
+}
+```
+
+如果在一个函数中的所有日志都需要添加某些字段，可以使用`WithFields`的返回值。例如在 Web 请求的处理器中，日志都要加上`user_id`和`ip`字段：
+
+```go
+package main
+
+import (
+  "github.com/sirupsen/logrus"
+)
+
+func main() {
+  requestLogger := logrus.WithFields(logrus.Fields{
+    "user_id": 10010,
+    "ip":      "192.168.32.15",
+  })
+
+  requestLogger.Info("info msg")
+  requestLogger.Error("error msg")
+}
+```
+
+实际上，`WithFields`返回一个`logrus.Entry`类型的值，它将`logrus.Logger`和设置的`logrus.Fields`保存下来。调用`Entry`相关方法输出日志时，保存下来的`logrus.Fields`也会随之输出。
+
+**重定向输出**
+
+默认情况下，日志输出到`io.Stderr`。可以调用`logrus.SetOutput`传入一个`io.Writer`参数。后续调用相关方法日志将写到`io.Writer`中。传入一个`io.MultiWriter`，同时将日志写到`bytes.Buffer`、标准输出和文件中：
+
+```go
+package main
+
+import (
+  "bytes"
+  "io"
+  "log"
+  "os"
+
+  "github.com/sirupsen/logrus"
+)
+
+func main() {
+  writer1 := &bytes.Buffer{}
+  writer2 := os.Stdout
+  writer3, err := os.OpenFile("log.txt", os.O_WRONLY|os.O_CREATE, 0755)
+  if err != nil {
+    log.Fatalf("create file log.txt failed: %v", err)
+  }
+
+  logrus.SetOutput(io.MultiWriter(writer1, writer2, writer3))
+  logrus.Info("info msg")
+}
+```
+
+### 3.7.3 日志格式
+
+`logrus`支持两种日志格式，文本和 JSON，默认为文本格式。可以通过`logrus.SetFormatter`设置日志格式：
+
+```go
+package main
+
+import (
+  "github.com/sirupsen/logrus"
+)
+
+func main() {
+  logrus.SetLevel(logrus.TraceLevel)
+  logrus.SetFormatter(&logrus.JSONFormatter{})
+
+  logrus.Trace("trace msg")
+  logrus.Debug("debug msg")
+  logrus.Info("info msg")
+  logrus.Warn("warn msg")
+  logrus.Error("error msg")
+  logrus.Fatal("fatal msg")
+  logrus.Panic("panic msg")
+}
+```
+
+**通过实现接口`logrus.Formatter`可以实现自己的格式。**
+
+```text
+// github.com/sirupsen/logrus/formatter.go
+type Formatter interface {
+  Format(*Entry) ([]byte, error)
+}
+```
+
+<font color=red>**设置钩子**</font>
+
+还可以为`logrus`设置钩子，每条日志输出前都会执行钩子的特定方法。所以，我们可以添加输出字段、根据级别将日志输出到不同的目的地。`logrus`也内置了一个`syslog`的钩子，将日志输出到`syslog`中。这里我们实现一个钩子，在输出的日志中增加一个`app=awesome-web`字段。
+
+钩子需要实现`logrus.Hook`接口：
+
+```go
+// github.com/sirupsen/logrus/hooks.go
+type Hook interface {
+  Levels() []Level
+  Fire(*Entry) error
+}
+```
+
+`Levels()`方法返回感兴趣的日志级别，输出其他日志时不会触发钩子。`Fire`是日志输出前调用的钩子方法。
+
+```go
+package main
+
+import (
+  "github.com/sirupsen/logrus"
+)
+
+type AppHook struct {
+  AppName string
+}
+
+func (h *AppHook) Levels() []logrus.Level {
+  return logrus.AllLevels
+}
+
+func (h *AppHook) Fire(entry *logrus.Entry) error {
+  entry.Data["app"] = h.AppName
+  return nil
+}
+
+func main() {
+  h := &AppHook{AppName: "awesome-web"}
+  logrus.AddHook(h)
+
+  logrus.Info("info msg")
+}
+```
+
+只需要在`Fire`方法实现中，为`entry.Data`添加字段就会输出到日志中。
+
+```text
+time="2020-02-08T15:51:52+08:00" level=info msg="info msg" app=awesome-web
+```
+
+`logrus`的第三方 Hook 很多，我们可以使用一些 Hook 将日志发送到 redis/mongodb 等存储中：
+
+- [mgorus](https://link.zhihu.com/?target=https%3A//github.com/weekface/mgorus)：将日志发送到 mongodb；
+
+- [logrus-redis-hook](https://link.zhihu.com/?target=https%3A//github.com/rogierlommers/logrus-redis-hook)：将日志发送到 redis；
+
+- [logrus-amqp](https://link.zhihu.com/?target=https%3A//github.com/vladoatanasov/logrus_amqp)：将日志发送到 ActiveMQ。
+
+演示一个 redis，感兴趣自行验证其他的。先安装`logrus-redis-hook`：
+
+```text
+ go get github.com/rogierlommers/logrus-redis-hook
+```
+
+```go
+package main
+
+import (
+  "io/ioutil"
+  logredis "github.com/rogierlommers/logrus-redis-hook"
+  "github.com/sirupsen/logrus"
+)
+
+func init() {
+  hookConfig := logredis.HookConfig{
+    Host: "localhost",
+		Key: "myKey",
+		Format: "v0",
+		App: "aweosome",
+		Port: 6379,
+		Hostname: "localhost",
+		DB:0,
+		TTL:3600,
+  }
+
+  hook, err := logredis.NewHook(hookConfig)
+  if err == nil {
+    logrus.AddHook(hook)
+  } else {
+    logrus.Errorf("logredis error: %q", err)
+  }
+}
+
+func main() {
+  logrus.Info("just some info logging...")
+
+  logrus.WithFields(logrus.Fields{
+    "animal": "walrus",
+    "foo":    "bar",
+    "this":   "that",
+  }).Info("additional fields are being logged as well")
+
+  logrus.SetOutput(ioutil.Discard)
+  logrus.Info("This will only be sent to Redis")
+}
+```
+
+## 3.8 rand
+
+golang中产生随机数主要有两个包，分别是“math/rand”和“crypto/rand”。
+
+- “math/rand”的rand包实现了伪随机数生成器。
+- "crypto/rand"的rand包实现了用于加解密的更安全的随机数生成器。
+
+```go
+//生成6位随机数
+package main
+import (
+   "fmt"
+   "math/rand"
+   ）
+func CreateCaptcha() string {
+   return fmt.Sprintf("%06v", rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(1000000))
+}
+func main(){
+   fmt.Println(CreateCaptcha() )
+}
+```
 
 # 4 结构体
 
@@ -1082,4 +1540,33 @@ func main() {
 	fmt.Println(object)
 }
 ```
+
+# 5 锁
+
+```go
+type Mutex struct {
+  state int32
+  sema  int32
+}
+```
+
+![img](go基础知识.assets/v2-98192ba42cd44737c36df96ef9500990_1440w.jpg)
+
+其中**Mutex.state**表示了当前互斥锁处于的状态
+
+waiterNum 表示目前互斥锁等待队列中有多少goroutine在等待
+
+straving 表示目前互斥锁是否处于饥饿状态
+
+woken 表示目前互斥锁是否为唤醒状态
+
+locked 表示目前互斥锁资源是否被goroutine持有
+
+而**Mutex.sema**主要用于等待队列
+
+## 互斥锁状态
+
+互斥锁通常保持两种状态 **正常模式** 与 **饥饿模式**
+引入**饥饿模式**的原因是，为了保持互斥锁的公平性。
+在**正常模式**下，锁资源一般会交给刚被唤醒的goroutine，而为了怕部分goroutine被“饿死”，所以引入了饥饿模式，在**饥饿模式**下，goroutine在释放锁资源的时候会将锁资源交给等待队列中的下一个goroutine。
 
